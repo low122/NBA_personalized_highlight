@@ -5,12 +5,14 @@ import numpy as np
 
 class TeamAssigner:
 
-    def __init__(self):
+    def __init__(self, buffer_size=15):
         self.team_colors = {}
         self.kmeans_model = KMeans(n_clusters=2, random_state=0, init="k-means++", n_init=1)
         self.player_team_dict = {}
         self.color_space = "LAB"
         self.player_team_buffer = {}
+        self.min_color_dominance = 0.6
+        self.buffer_size = buffer_size
 
     """
     Get the clustering model for the image
@@ -50,12 +52,11 @@ class TeamAssigner:
     """
     def get_player_color(self, frame, bbox):
         """Improved color extraction with outlier rejection"""
-        x1, y1, x2, y2 = map(int, bbox)
-        crop = frame[y1:y2, x1:x2]
+        crop = frame[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])]
         
         # Focus on upper torso region (avoid shorts/background)
-        height = y2 - y1
-        torso = crop[:int(height*0.4), :]  # Top 40% of bounding box
+
+        torso = crop[0:int(crop.shape[0]*0.4), :]  # Top 40% of bounding box
         
         # Convert color space and get dominant color
         converted = self.convert_color_img(torso)
@@ -68,11 +69,14 @@ class TeamAssigner:
         return centers[0]
 
 
+    """
+    Robust team assignment with outlier filtering
+    """
     def assign_teams(self, player_colors):
-        """Robust team assignment with outlier filtering"""
         valid_colors = [c for c in player_colors if c is not None]
         
         if len(valid_colors) < 2:
+            print("Not enough data")
             return  # Not enough data
         
         # Use K-means++ with multiple initializations
@@ -84,25 +88,31 @@ class TeamAssigner:
             2: kmeans.cluster_centers_[np.argmin(kmeans.cluster_centers_[:,0])]
         }
 
-
-
     def get_player_team(self, player_id, current_color):
-        """Temporal consistency with team buffers"""
+        """Returns team ID (1 or 2) based on color analysis"""
+        if current_color is None:
+            # Maintain previous assignment if available
+            if player_id in self.player_team_buffer:
+                return Counter(self.player_team_buffer[player_id]).most_common(1)[0][0]
+            return None
+
+        # Initialize buffer if needed
         if player_id not in self.player_team_buffer:
             self.player_team_buffer[player_id] = deque(maxlen=self.buffer_size)
+
+        # Calculate team distances
+        if len(self.team_colors) >= 2:
+            distances = [
+                np.linalg.norm(current_color - self.team_colors[1]),
+                np.linalg.norm(current_color - self.team_colors[2])
+            ]
+            team_id = np.argmin(distances) + 1
+        else:
+            # Fallback if clustering hasn't happened yet
+            team_id = 1 if np.mean(current_color) > 127 else 2
+
+        # Update buffer
+        self.player_team_buffer[player_id].append(team_id)
         
-        if current_color is None:
-            return None  # Maintain previous assignment
-        
-        # Calculate distances to both team centroids
-        distances = [
-            np.linalg.norm(current_color - self.team_colors[1]),
-            np.linalg.norm(current_color - self.team_colors[2])
-        ]
-        team = np.argmin(distances) + 1
-        
-        # Update assignment buffer
-        self.player_team_buffer[player_id].append(team)
-        
-        # Return majority vote from buffer
+        # Return majority vote
         return Counter(self.player_team_buffer[player_id]).most_common(1)[0][0]
