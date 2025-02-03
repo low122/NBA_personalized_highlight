@@ -6,7 +6,10 @@ import numpy as np
 class TeamAssigner:
 
     def __init__(self, buffer_size=15):
-        self.team_colors = {}
+        self.team_colors = None
+        self.is_calibrated = False
+        self.reference_colors = {1:None, 2:None}
+        self.player_team_dict = {}
         self.kmeans_model = KMeans(n_clusters=2, random_state=0, init="k-means++", n_init=1)
         self.player_team_dict = {}
         self.color_space = "LAB"
@@ -14,35 +17,48 @@ class TeamAssigner:
         self.min_color_dominance = 0.6
         self.buffer_size = buffer_size
 
-    """
-    Get the clustering model for the image
-
-    Output: kmeans: KMeans model
-    """
-    def get_clustering_model(self, image):
-        image_2d = image.reshape(-1,3) # Reshape the image to 2D
-
-        kmeans = self.kmeans_model.fit(image_2d)
-
-        return kmeans
+    def initial_calibration(self, player_colors):
+        """One-time calibration using first valid frame"""
+        valid_colors = [c for c in player_colors if c is not None]
+        
+        if len(valid_colors) < 2:
+            return False
+            
+        kmeans = KMeans(n_clusters=2, n_init=20, random_state=42).fit(valid_colors)
+        
+        # Store reference colors in LAB space
+        self.reference_colors = {
+            1: kmeans.cluster_centers_[0],
+            2: kmeans.cluster_centers_[1]
+        }
+        self.is_calibrated = True
+        return True
+        
     
-    def convert_color_img(self, image):
-        if self.color_space == "HSV":
-            return cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        elif self.color_space == "LAB":
-            return cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        return image
+    # def convert_color_img(self, image):
+    #     if self.color_space == "HSV":
+    #         return cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    #     elif self.color_space == "LAB":
+    #         return cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    #     return image
     
     def get_dominant_color(self, frame, top_n=1):
-        image = frame.reshape(-1,3)
+        image = frame.reshape(-1,3).astype(np.float32)
 
-        criteria = (cv2.TERM_CRITERIA_EPS +cv2.TERM_CRITERIA_MAX_ITER, 200, .1)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
 
-        _, labels, centers = cv2.kmeans(image.astype(np.float32), 2, None, criteria, 10, cv2.KMEANS_PP_CENTERS)
+        _, labels, centers = cv2.kmeans(
+        image, 
+        K=2,  # Reduced from 3 to focus on jersey vs background
+        bestLabels=None,
+        criteria=criteria,
+        attempts=10,
+        flags=cv2.KMEANS_PP_CENTERS
+    )
 
         # Calculate the dominance ratio
         counts = np.bincount(labels.flatten())
-        dominance_idx = np.argsort(-counts)[:top_n]
+        dominance_idx = np.argmax(counts)
         return centers[dominance_idx], counts[dominance_idx]/len(labels)
 
     """
@@ -54,19 +70,25 @@ class TeamAssigner:
         """Improved color extraction with outlier rejection"""
         crop = frame[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])]
         
-        # Focus on upper torso region (avoid shorts/background)
-
-        torso = crop[0:int(crop.shape[0]*0.4), :]  # Top 40% of bounding box
+        # Focus on the jersey instead of the entire bounding box
+        torso = crop[0:int(crop.shape[0]*0.75), :]
         
         # Convert color space and get dominant color
-        converted = self.convert_color_img(torso)
-        centers, ratios = self.get_dominant_color(converted, top_n=2)
+        lab = cv2.cvtColor(torso, cv2.COLOR_BGR2LAB)
+        l_channel = lab[:,:,0]
+        mask = l_channel > 40  # Filter out dark shadows
+        filtered_lab = lab[mask]
+        
+        if filtered_lab.size == 0:
+            return None
+        
+        centers, dominance = self.get_dominant_color(filtered_lab)
         
         # Ensure dominant color meets threshold
-        if ratios[0] < self.min_color_dominance:
+        if dominance < self.min_color_dominance:
             return None  # Reject ambiguous colors
         
-        return centers[0]
+        return cv2.cvtColor(np.uint8([[centers]]), cv2.COLOR_LAB2BGR)[0][0]
 
 
     """
@@ -88,31 +110,13 @@ class TeamAssigner:
             2: kmeans.cluster_centers_[np.argmin(kmeans.cluster_centers_[:,0])]
         }
 
-    def get_player_team(self, player_id, current_color):
-        """Returns team ID (1 or 2) based on color analysis"""
-        if current_color is None:
-            # Maintain previous assignment if available
-            if player_id in self.player_team_buffer:
-                return Counter(self.player_team_buffer[player_id]).most_common(1)[0][0]
+    def get_player_team(self, current_color):
+        """Match to reference colors using LAB distance"""
+        if not self.is_calibrated or current_color is None:
             return None
-
-        # Initialize buffer if needed
-        if player_id not in self.player_team_buffer:
-            self.player_team_buffer[player_id] = deque(maxlen=self.buffer_size)
-
-        # Calculate team distances
-        if len(self.team_colors) >= 2:
-            distances = [
-                np.linalg.norm(current_color - self.team_colors[1]),
-                np.linalg.norm(current_color - self.team_colors[2])
-            ]
-            team_id = np.argmin(distances) + 1
-        else:
-            # Fallback if clustering hasn't happened yet
-            team_id = 1 if np.mean(current_color) > 127 else 2
-
-        # Update buffer
-        self.player_team_buffer[player_id].append(team_id)
-        
-        # Return majority vote
-        return Counter(self.player_team_buffer[player_id]).most_common(1)[0][0]
+            
+        distances = [
+            np.linalg.norm(current_color - self.reference_colors[1]),
+            np.linalg.norm(current_color - self.reference_colors[2])
+        ]
+        return np.argmin(distances) + 1
