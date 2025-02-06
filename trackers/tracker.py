@@ -65,30 +65,14 @@ class Tracker:
             tracks['players'].append({})
             tracks['balls'].append({})
             tracks['rims'].append({})
-            frame_players = []
 
             for frame_detection in detection_with_tracks:
                 bbox = frame_detection[0].tolist()
                 cls_id = frame_detection[3]
                 track_id = frame_detection[4]
 
-                if cls_id == cls_name_inv['Player']:
+                if cls_id == cls_name_inv['Players']:
                     tracks['players'][frame_num][track_id] = {"bbox":bbox}
-                    
-                    # Extract team color (returns None if ambiguous)
-                    team_color = self.team_assigner.get_player_color(frames[frame_num], bbox)
-                    frame_players.append(team_color)
-
-            # Cluster teams every 30 frames
-            if frame_num % 30 == 0 and len(frame_players) > 1:
-                valid_colors = [c for c in frame_players if c is not None]
-                if len(valid_colors) >= 2:
-                    self.team_assigner.assign_teams(valid_colors)
-
-            # Store colors in tracks
-            for idx, (track_id, player) in enumerate(tracks['players'][frame_num].items()):
-                if idx < len(frame_players):
-                    player["team_color"] = frame_players[idx]
 
             # Below is the code for tracking the ball and rim
             for frame_detection in detection_supervision:
@@ -145,10 +129,6 @@ class Tracker:
     def draw_annotations(self, video_frame, tracks):
         output_video_frames = []
         current_teams = {}
-        team_colors = {
-            1: (0, 0, 255),  # Red
-            2: (0, 255, 0)  # Blue
-        }
 
         for frame_num, frame in enumerate(video_frame):
             frame = frame.copy()
@@ -171,15 +151,7 @@ class Tracker:
                 player_bbox = player["bbox"]
                 player_center = get_center_of_bbox(player_bbox)
 
-                raw_color = player.get("team_color")
-                team_id = self.team_assigner.get_player_team(track_id, raw_color)
-
-                # Handle new players or failed detection
-                if team_id is None:
-                    team_id = 1  # Default to red
-
-                team_color = team_colors[team_id]
-                current_teams[track_id] = team_id
+                color = player.get("team_color")
 
                 if rim_bbox and player_bbox:
                     pixels_per_foot = 10
@@ -195,7 +167,7 @@ class Tracker:
                     )
 
                 # This is the player's frame
-                frame = self.draw_ellipse(frame, player["bbox"], team_color, track_id)
+                frame = self.draw_ellipse(frame, player["bbox"], color, track_id)
 
             self.temporal_team_buffer.update(current_teams)
 

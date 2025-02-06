@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 9
+names: ['Ball', 'Hoop', 'Period', 'Player', 'Ref', 'Shot Clock', 'Team Name', 'Team Points', 'Time Remaining']
+
+roboflow:
+  workspace: jiatzin-low-amb9c
+  project: basketball-players-fy4c2-ppixx
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/jiatzin-low-amb9c/basketball-players-fy4c2-ppixx/dataset/1
