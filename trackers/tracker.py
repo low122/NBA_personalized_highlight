@@ -5,18 +5,61 @@ import os
 import cv2
 import sys
 import math
+import torch
 sys.path.append('../')
 from utils import get_center_of_bbox, get_bbox_width, calculate_distance
 from team_assigner import TeamAssigner
 
+import torchvision.models as models
+import torchvision.transforms as transforms
+from PIL import Image
+
 class Tracker:
     
-    def __init__(self, model_path):
+    def __init__(self, model_path, reid_model_name = 'resnet50', device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.model = YOLO(model_path)  # Trained model
         self.tracker = sv.ByteTrack()
         self.pixels_per_foot = 50
         self.team_assigner = TeamAssigner()
         self.temporal_team_buffer = {}
+
+        # Re-ID Model Setup
+        self.device = device
+        self.reid_model = self._load_reid_model(reid_model_name).to(self.device).eval() # Load Re-ID model
+        self.reid_preprocess = transforms.Compose([ # Preprocessing for Re-ID model (adjust as needed for your chosen model)
+            transforms.Resize((256, 128)), # Common Re-ID input size
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # ImageNet normalization
+        ])
+
+
+
+    def _load_reid_model(self, model_name='resnet50'):
+        if model_name == 'resnet50': # Example - replace with your chosen Re-ID model and loading method
+            model = models.resnet50(weights='ResNet50_Weights.DEFAULT') # Load pre-trained ResNet-50
+            # Remove classification layer, keep feature extraction part (adjust based on model architecture)
+            model = torch.nn.Sequential(*(list(model.children())[:-1])) # Keep all layers except last FC
+            return model
+        else:
+            raise ValueError(f"Re-ID model '{model_name}' not implemented in this example. Choose 'resnet50' or implement loading for your model.")
+        
+    def get_reid_features(self, frame_rgb, bbox_xyxy):
+        """Extracts Re-ID features from a player bounding box."""
+        x1, y1, x2, y2 = map(int, bbox_xyxy)
+        player_crop = frame_rgb[y1:y2, x1:x2]
+        if player_crop.size == 0: # Handle empty crop (bbox at image boundary)
+            return None
+
+        player_crop_pil = Image.fromarray(player_crop) # Convert to PIL Image for torchvision transforms
+        player_crop_preprocessed = self.reid_preprocess(player_crop_pil).unsqueeze(0).to(self.device) # Preprocess and add batch dimension
+
+        with torch.no_grad(): # Inference mode
+            reid_features = self.reid_model(player_crop_preprocessed) # Extract features
+            reid_features = torch.flatten(reid_features, 1) # Flatten to a feature vector
+
+        return reid_features.cpu().numpy() # Return as numpy array
+
+
 
     def detect_frames(self, frames):
         batch_size = 20
@@ -38,8 +81,6 @@ class Tracker:
             with open(stub_path,'rb') as f:
                 tracks = pickle.load(f)
             return tracks
-        
-        detections = self.detect_frames(frames)
 
         # Dictionary format
         tracks={
@@ -48,10 +89,9 @@ class Tracker:
             'rims':[]
         }
 
-        for frame_num, detection in enumerate(detections):
-            cls_name = detection.names
-
-            cls_name_inv = {v:k for k,v in cls_name.items()}
+        for frame_num, frame_rgb_bgr in enumerate(frames):
+            frame_rgb = cv2.cvtColor(frames[frame_num], cv2.COLOR_BGR2RGB) # Convert frame to RGB for Re-ID
+            detection = self.model.predict(frame_rgb_bgr, conf=0.1)[0]
 
             """
             1. Convert to supervision Detection format
@@ -66,13 +106,20 @@ class Tracker:
             tracks['balls'].append({})
             tracks['rims'].append({})
 
+            cls_name = detection.names
+            cls_name_inv = {v:k for k,v in cls_name.items()}
+
+            # Tracking players
             for frame_detection in detection_with_tracks:
                 bbox = frame_detection[0].tolist()
                 cls_id = frame_detection[3]
                 track_id = frame_detection[4]
 
-                if cls_id == cls_name_inv['Players']:
-                    tracks['players'][frame_num][track_id] = {"bbox":bbox}
+                if cls_id == cls_name_inv['Player']:
+                    reid_features = self.get_reid_features(frame_rgb, bbox)
+                    tracks['players'][frame_num][track_id] = {"bbox":bbox, "reid_features":reid_features}
+
+
 
             # Below is the code for tracking the ball and rim
             for frame_detection in detection_supervision:
@@ -85,7 +132,7 @@ class Tracker:
             for frame_detection in detection_supervision:
                 bbox = frame_detection[0].tolist()
                 cls_id = frame_detection[3]
-                track_id = frame_detection[4]
+                track_id = int(frame_detection[4])
 
                 if cls_id == cls_name_inv['Rim']:
                     tracks['rims'][frame_num][track_id] = {"bbox":bbox}
@@ -132,6 +179,8 @@ class Tracker:
 
         for frame_num, frame in enumerate(video_frame):
             frame = frame.copy()
+
+            print(f"Frame number: {frame_num}, len(video_frame): {len(video_frame)}, len(tracks['players']): {len(tracks['players'])}") # ADD THIS LINE FOR DEBUGGING
 
             player_dict = tracks["players"][frame_num]
             ball_dict = tracks["balls"][frame_num]
