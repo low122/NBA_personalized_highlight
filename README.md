@@ -1,6 +1,6 @@
 # NBA Personalized Highlight Generator
 
-This project builds a system that allows fans to select teams, players, etc., to follow and receive regular audio, video, and/or text digests of the latest highlights and commentary.  The system processes NBA game footage to identify players, track their movements, and assign them to teams based on their jersey colors.  The output is an annotated video showing player and ball tracking.
+This project builds an ai-powered floating widget that provides play-by-play analysis with an AI generated audio or text digests of the latest highlights and commentary.  The system processes NBA game footage to identify players, track their movements, and assign them to teams based on their jersey colors.  The output is an annotated video showing player and ball tracking.
 
 
 ## Features
