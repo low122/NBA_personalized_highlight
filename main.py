@@ -1,30 +1,33 @@
 from utils import read_video, save_video
 from trackers import Tracker
 import cv2
-from team_assigner import TeamAssigner
+from team_assigner import TeamAssignerColorBased
 from player_ball_assigner import PlayerBallAssigner
 
 def main():
     # Read Video
-    video_frames, fps = read_video('input_videos/Screen Recording 2025-02-08 at 00.10.37.mov')
+    video_frames, fps = read_video('input_videos/Screen Recording 2025-02-06 at 23.57.50.mov')
 
     # Initialize pre-trained model
     tracker = Tracker("models/best.pt")
 
     tracks = tracker.get_object_tracks(video_frames,
                                        read_from_stub=True,
-                                       stub_path='stubs/old_version.pkl')
+                                       stub_path='stubs/new_version.pkl')
     
     # Interpolate ball position
     tracks['balls'] = tracker.interpolate_ball_positions(tracks['balls'])
 
 
     # Assign player team
-    team_assigner = TeamAssigner()
-    calibaration_check = team_assigner.calibrate_team_colors(video_frames[0], tracks['players'][0])
+    team_assigner = TeamAssignerColorBased()
+    calibaration_check = team_assigner.calibrate_team_colors(
+                            video_frames[0], 
+                            tracks['players'][0])
 
     if not calibaration_check:
         print("Team Color Calibaration failed")
+        team_assigner.team_colors = {1: [255,0,0], 2: [0,0,255]}  # Default colors - Corrected keys to 1 and 2
 
     for frame_num, player_track in enumerate(tracks['players']):
         for player_id, track in player_track.items():
@@ -38,18 +41,20 @@ def main():
     player_assigner = PlayerBallAssigner()
     for frame_num, player_track in enumerate(tracks['players']):
         ball_bbox = tracks['balls'][frame_num][1]['bbox']
+
         assigned_player = player_assigner.assign_ball_to_player(player_track, ball_bbox)
 
         if assigned_player != -1:
             tracks['players'][frame_num][assigned_player]['has_ball'] = True
             tracks['players'][frame_num][assigned_player]['with_ball'] = ball_bbox
 
-    # Draw output video
+    # # Draw output video
     output_video_frames = tracker.draw_annotations(video_frame=video_frames, tracks=tracks)
 
-    # save video
-    save_video(output_video_frames, 'output_videos/team_assigner4.mp4', fps=fps)
+    # # save video
+    save_video(output_video_frames, 'output_videos/team_assigner.mp4', fps=fps)
 
+    print("Successfully run")
 
 if __name__ == "__main__":
     main()

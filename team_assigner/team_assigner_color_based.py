@@ -3,7 +3,7 @@ from collections import deque, defaultdict, Counter
 import cv2
 import numpy as np
 
-class TeamAssigner:
+class TeamAssignerColorBased:
     def __init__(self):
         self.team_colors = {}
         self.player_team_dict = {}
@@ -178,6 +178,7 @@ class TeamAssigner:
             2: distance_2  # Distance to Palette 2
         }
         initial_team_id = min(distances, key=distances.get) # Team with minimum distance (highest correlation)
+        print("Initial team Id: ", initial_team_id)
 
 
         # Temporal Smoothing - Majority Voting
