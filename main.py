@@ -54,7 +54,7 @@ def main():
     # # save video
     save_video(output_video_frames, 'output_videos/team_assigner.mp4', fps=fps)
 
-    print("Successfully run")
+    print("RUN Successfully")
 
 if __name__ == "__main__":
     main()
