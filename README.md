@@ -26,16 +26,7 @@ This project builds an ai-powered floating widget that provides play-by-play ana
     ```bash
     git clone <repository_url>
     ```
-2.  **Create virtual environment (recommended):**
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    ```
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  **(Optional) Download pre-trained model:** Download the `best.pt` model and place it in the `models` directory.
+2.  **(Optional) Download pre-trained model:** Download the `best.pt` model and place it in the `models` directory.
 
 
 ## Technologies Used
